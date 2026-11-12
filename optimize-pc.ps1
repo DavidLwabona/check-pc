@@ -13,12 +13,13 @@ param(
     [switch]$RestoreNIServices,
     [switch]$HideLinuxRecoveryDrive,
     [switch]$DisableUnusedBloat,
-    [switch]$UpdateSafePackages
+    [switch]$UpdateSafePackages,
+    [switch]$UpgradeSoftwareStack
 )
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
-if (-not ($SetBalancedPowerPlan -or $CleanOrphanStartup -or $DisableNIServices -or $RestoreNIServices -or $HideLinuxRecoveryDrive -or $DisableUnusedBloat -or $UpdateSafePackages)) {
+if (-not ($SetBalancedPowerPlan -or $CleanOrphanStartup -or $DisableNIServices -or $RestoreNIServices -or $HideLinuxRecoveryDrive -or $DisableUnusedBloat -or $UpdateSafePackages -or $UpgradeSoftwareStack)) {
     Write-Host ""
     Write-Host "  OPTIMIZE-PC // Available Remediation Flags" -ForegroundColor Cyan
     Write-Host "  ------------------------------------------------------------------" -ForegroundColor DarkCyan
@@ -29,6 +30,7 @@ if (-not ($SetBalancedPowerPlan -or $CleanOrphanStartup -or $DisableNIServices -
     Write-Host "  .\optimize-pc.cmd -HideLinuxRecoveryDrive  # [Admin] Safely unmount D: letter from Pop!_OS /recovery partition"
     Write-Host "  .\optimize-pc.cmd -DisableUnusedBloat      # [Admin] Disable Eraser & TickTick autostart + stop SamsungMagicianSVC"
     Write-Host "  .\optimize-pc.cmd -UpdateSafePackages      # [Admin] Pin qBittorrent 5.1.0 & upgrade vetted security/utility apps"
+    Write-Host "  .\optimize-pc.cmd -UpgradeSoftwareStack    # [Admin] Remove Lenovo Now/Legion Arena & install Legion Toolkit + KeePassXC"
     Write-Host ""
     return
 }
@@ -59,7 +61,7 @@ if ($CleanOrphanStartup) {
     }
 }
 
-$needsAdmin = ($DisableNIServices -or $RestoreNIServices -or $HideLinuxRecoveryDrive -or $DisableUnusedBloat -or $UpdateSafePackages)
+$needsAdmin = ($DisableNIServices -or $RestoreNIServices -or $HideLinuxRecoveryDrive -or $DisableUnusedBloat -or $UpdateSafePackages -or $UpgradeSoftwareStack)
 if ($needsAdmin -and -not $isAdmin) {
     Write-Host "[*] Administrator privileges are required for the selected flags. Requesting UAC elevation..." -ForegroundColor Yellow
     $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"")
@@ -70,6 +72,7 @@ if ($needsAdmin -and -not $isAdmin) {
     if ($HideLinuxRecoveryDrive) { $argList += "-HideLinuxRecoveryDrive" }
     if ($DisableUnusedBloat)     { $argList += "-DisableUnusedBloat" }
     if ($UpdateSafePackages)     { $argList += "-UpdateSafePackages" }
+    if ($UpgradeSoftwareStack)   { $argList += "-UpgradeSoftwareStack" }
     try {
         Start-Process powershell.exe -Verb RunAs -ArgumentList ($argList -join " ") -Wait
         return
@@ -149,4 +152,32 @@ if ($UpdateSafePackages) {
         winget upgrade --id $pkg --silent --accept-package-agreements --accept-source-agreements
     }
     Write-Host "[+] Safe package upgrades completed!" -ForegroundColor Green
+}
+
+if ($UpgradeSoftwareStack) {
+    $arenaUninst = "C:\Program Files (x86)\Lenovo\Legion Arena\unins000.exe"
+    if (Test-Path $arenaUninst) {
+        Write-Host "[*] Uninstalling Legion Arena..." -ForegroundColor Yellow
+        Start-Process -FilePath $arenaUninst -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART" -Wait
+        Write-Host "    Legion Arena uninstalled." -ForegroundColor Green
+    } else {
+        Write-Host "    Legion Arena is already uninstalled." -ForegroundColor Gray
+    }
+
+    $nowUninst = "C:\Program Files (x86)\Lenovo\LenovoNow\unins000.exe"
+    if (Test-Path $nowUninst) {
+        Write-Host "[*] Uninstalling Lenovo Now..." -ForegroundColor Yellow
+        Start-Process -FilePath $nowUninst -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART" -Wait
+        Write-Host "    Lenovo Now uninstalled." -ForegroundColor Green
+    } else {
+        Write-Host "    Lenovo Now is already uninstalled." -ForegroundColor Gray
+    }
+
+    Write-Host "[*] Installing Lenovo Legion Toolkit (BartoszCichecki.LenovoLegionToolkit)..." -ForegroundColor Cyan
+    winget install --id BartoszCichecki.LenovoLegionToolkit --silent --accept-package-agreements --accept-source-agreements
+
+    Write-Host "[*] Installing KeePassXC (KeePassXCTeam.KeePassXC)..." -ForegroundColor Cyan
+    winget install --id KeePassXCTeam.KeePassXC --silent --accept-package-agreements --accept-source-agreements
+
+    Write-Host "[+] Software stack upgrade complete!" -ForegroundColor Green
 }
