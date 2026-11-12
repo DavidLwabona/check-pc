@@ -55,46 +55,52 @@ if ($CleanOrphanStartup) {
     }
 }
 
-if ($DisableNIServices) {
-    if (-not $isAdmin) {
-        Write-Warning "Stopping and reconfiguring National Instruments system services requires an Administrator PowerShell prompt."
-    } else {
-        $niSvcs = Get-Service | Where-Object { $_.DisplayName -match '^NI ' -or $_.Name -match '^(NI|lkads|lktsrv|mxssvr)' }
-        foreach ($s in $niSvcs) {
-            Write-Host "    Setting $($s.Name) ($($s.DisplayName)) -> Manual & Stopped" -ForegroundColor Yellow
-            Stop-Service -Name $s.Name -Force -ErrorAction SilentlyContinue
-            Set-Service -Name $s.Name -StartupType Manual -ErrorAction SilentlyContinue
-        }
-        Write-Host "    National Instruments services set to Manual and stopped." -ForegroundColor Green
+$needsAdmin = ($DisableNIServices -or $RestoreNIServices -or $HideLinuxRecoveryDrive)
+if ($needsAdmin -and -not $isAdmin) {
+    Write-Host "[*] Administrator privileges are required for the selected flags. Requesting UAC elevation..." -ForegroundColor Yellow
+    $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"")
+    if ($SetBalancedPowerPlan)   { $argList += "-SetBalancedPowerPlan" }
+    if ($CleanOrphanStartup)     { $argList += "-CleanOrphanStartup" }
+    if ($DisableNIServices)      { $argList += "-DisableNIServices" }
+    if ($RestoreNIServices)      { $argList += "-RestoreNIServices" }
+    if ($HideLinuxRecoveryDrive) { $argList += "-HideLinuxRecoveryDrive" }
+    try {
+        Start-Process powershell.exe -Verb RunAs -ArgumentList ($argList -join " ") -Wait
+        return
+    } catch {
+        Write-Warning "Could not auto-elevate from this session ($($_.Exception.Message)). Please run this command in an Administrator PowerShell window or your interactive VS Code terminal."
+        return
     }
+}
+
+if ($DisableNIServices) {
+    $niSvcs = Get-Service | Where-Object { $_.DisplayName -match '^NI ' -or $_.Name -match '^(NI|lkads|lktsrv|mxssvr)' }
+    foreach ($s in $niSvcs) {
+        Write-Host "    Setting $($s.Name) ($($s.DisplayName)) -> Manual & Stopped" -ForegroundColor Yellow
+        Stop-Service -Name $s.Name -Force -ErrorAction SilentlyContinue
+        Set-Service -Name $s.Name -StartupType Manual -ErrorAction SilentlyContinue
+    }
+    Write-Host "    National Instruments services set to Manual and stopped." -ForegroundColor Green
 }
 
 if ($RestoreNIServices) {
-    if (-not $isAdmin) {
-        Write-Warning "Starting National Instruments system services requires an Administrator PowerShell prompt."
-    } else {
-        $niSvcs = Get-Service | Where-Object { $_.DisplayName -match '^NI ' -or $_.Name -match '^(NI|lkads|lktsrv|mxssvr)' }
-        foreach ($s in $niSvcs) {
-            Write-Host "    Starting $($s.Name) ($($s.DisplayName))..." -ForegroundColor Cyan
-            Start-Service -Name $s.Name -ErrorAction SilentlyContinue
-        }
-        Write-Host "    National Instruments services started." -ForegroundColor Green
+    $niSvcs = Get-Service | Where-Object { $_.DisplayName -match '^NI ' -or $_.Name -match '^(NI|lkads|lktsrv|mxssvr)' }
+    foreach ($s in $niSvcs) {
+        Write-Host "    Starting $($s.Name) ($($s.DisplayName))..." -ForegroundColor Cyan
+        Start-Service -Name $s.Name -ErrorAction SilentlyContinue
     }
+    Write-Host "    National Instruments services started." -ForegroundColor Green
 }
 
 if ($HideLinuxRecoveryDrive) {
-    if (-not $isAdmin) {
-        Write-Warning "Removing a drive letter mount requires an Administrator PowerShell prompt."
-    } else {
-        if (Test-Path "D:\recovery.conf") {
-            Write-Host "[*] Verified D:\ is a Pop!_OS recovery partition (found D:\recovery.conf)." -ForegroundColor Cyan
-            $part = Get-Partition -DriveLetter D -ErrorAction SilentlyContinue
-            if ($part) {
-                Remove-PartitionAccessPath -DiskNumber $part.DiskNumber -PartitionNumber $part.PartitionNumber -AccessPath "D:\"
-                Write-Host "    Successfully removed drive letter D: in Windows. Your Pop!_OS /recovery partition is now hidden from Windows Explorer." -ForegroundColor Green
-            }
-        } else {
-            Write-Warning "D:\recovery.conf was not found. Aborting to avoid unmounting an unexpected drive."
+    if (Test-Path "D:\recovery.conf") {
+        Write-Host "[*] Verified D:\ is a Pop!_OS recovery partition (found D:\recovery.conf)." -ForegroundColor Cyan
+        $part = Get-Partition -DriveLetter D -ErrorAction SilentlyContinue
+        if ($part) {
+            Remove-PartitionAccessPath -DiskNumber $part.DiskNumber -PartitionNumber $part.PartitionNumber -AccessPath "D:\"
+            Write-Host "    Successfully removed drive letter D: in Windows. Your Pop!_OS /recovery partition is now hidden from Windows Explorer." -ForegroundColor Green
         }
+    } else {
+        Write-Warning "D:\recovery.conf was not found. Aborting to avoid unmounting an unexpected drive."
     }
 }
