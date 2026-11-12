@@ -11,20 +11,22 @@ param(
     [switch]$CleanOrphanStartup,
     [switch]$DisableNIServices,
     [switch]$RestoreNIServices,
-    [switch]$HideLinuxRecoveryDrive
+    [switch]$HideLinuxRecoveryDrive,
+    [switch]$DisableUnusedBloat
 )
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
-if (-not ($SetBalancedPowerPlan -or $CleanOrphanStartup -or $DisableNIServices -or $RestoreNIServices -or $HideLinuxRecoveryDrive)) {
+if (-not ($SetBalancedPowerPlan -or $CleanOrphanStartup -or $DisableNIServices -or $RestoreNIServices -or $HideLinuxRecoveryDrive -or $DisableUnusedBloat)) {
     Write-Host ""
     Write-Host "  OPTIMIZE-PC // Available Remediation Flags" -ForegroundColor Cyan
     Write-Host "  ------------------------------------------------------------------" -ForegroundColor DarkCyan
-    Write-Host "  .\optimize-pc.ps1 -SetBalancedPowerPlan    # Switch from High Performance to Balanced (Intel 12th Gen P+E optimal)"
-    Write-Host "  .\optimize-pc.ps1 -CleanOrphanStartup      # Remove empty/orphaned HKCU Run registry entries (e.g. GalaxyClient)"
-    Write-Host "  .\optimize-pc.ps1 -DisableNIServices       # [Admin] Stop NI background web servers (port 8080/3582) & set Manual"
-    Write-Host "  .\optimize-pc.ps1 -RestoreNIServices       # [Admin] Start NI background services for LabVIEW/Multisim sessions"
-    Write-Host "  .\optimize-pc.ps1 -HideLinuxRecoveryDrive  # [Admin] Safely unmount D: letter from Pop!_OS /recovery partition"
+    Write-Host "  .\optimize-pc.cmd -SetBalancedPowerPlan    # Switch from High Performance to Balanced (Intel 12th Gen P+E optimal)"
+    Write-Host "  .\optimize-pc.cmd -CleanOrphanStartup      # Remove empty/orphaned HKCU Run registry entries (e.g. GalaxyClient)"
+    Write-Host "  .\optimize-pc.cmd -DisableNIServices       # [Admin] Stop NI background web servers (port 8080/3582) & set Manual"
+    Write-Host "  .\optimize-pc.cmd -RestoreNIServices       # [Admin] Start NI background services for LabVIEW/Multisim sessions"
+    Write-Host "  .\optimize-pc.cmd -HideLinuxRecoveryDrive  # [Admin] Safely unmount D: letter from Pop!_OS /recovery partition"
+    Write-Host "  .\optimize-pc.cmd -DisableUnusedBloat      # [Admin] Disable Eraser & TickTick autostart + stop SamsungMagicianSVC"
     Write-Host ""
     return
 }
@@ -55,7 +57,7 @@ if ($CleanOrphanStartup) {
     }
 }
 
-$needsAdmin = ($DisableNIServices -or $RestoreNIServices -or $HideLinuxRecoveryDrive)
+$needsAdmin = ($DisableNIServices -or $RestoreNIServices -or $HideLinuxRecoveryDrive -or $DisableUnusedBloat)
 if ($needsAdmin -and -not $isAdmin) {
     Write-Host "[*] Administrator privileges are required for the selected flags. Requesting UAC elevation..." -ForegroundColor Yellow
     $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"")
@@ -64,6 +66,7 @@ if ($needsAdmin -and -not $isAdmin) {
     if ($DisableNIServices)      { $argList += "-DisableNIServices" }
     if ($RestoreNIServices)      { $argList += "-RestoreNIServices" }
     if ($HideLinuxRecoveryDrive) { $argList += "-HideLinuxRecoveryDrive" }
+    if ($DisableUnusedBloat)     { $argList += "-DisableUnusedBloat" }
     try {
         Start-Process powershell.exe -Verb RunAs -ArgumentList ($argList -join " ") -Wait
         return
@@ -102,5 +105,25 @@ if ($HideLinuxRecoveryDrive) {
         }
     } else {
         Write-Warning "D:\recovery.conf was not found. Aborting to avoid unmounting an unexpected drive."
+    }
+}
+
+if ($DisableUnusedBloat) {
+    Write-Host "[*] Disabling TickTick, Eraser autostart, and SamsungMagicianSVC background service..." -ForegroundColor Cyan
+    $tt = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\TickTick.lnk"
+    if (Test-Path $tt) {
+        Remove-Item $tt -Force -ErrorAction SilentlyContinue
+        Write-Host "    Removed TickTick.lnk from User Startup folder." -ForegroundColor Green
+    }
+    $eraserReg = Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "Eraser" -ErrorAction SilentlyContinue
+    if ($eraserReg) {
+        Remove-ItemProperty -Path "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "Eraser" -ErrorAction SilentlyContinue
+        Write-Host "    Removed Eraser from HKLM\...\Run autostart." -ForegroundColor Green
+    }
+    $smSvc = Get-Service -Name "SamsungMagicianSVC" -ErrorAction SilentlyContinue
+    if ($smSvc) {
+        Stop-Service -Name "SamsungMagicianSVC" -Force -ErrorAction SilentlyContinue
+        Set-Service -Name "SamsungMagicianSVC" -StartupType Manual -ErrorAction SilentlyContinue
+        Write-Host "    Stopped SamsungMagicianSVC and set StartupType to Manual." -ForegroundColor Green
     }
 }
