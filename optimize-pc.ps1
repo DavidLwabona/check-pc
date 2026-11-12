@@ -12,12 +12,13 @@ param(
     [switch]$DisableNIServices,
     [switch]$RestoreNIServices,
     [switch]$HideLinuxRecoveryDrive,
-    [switch]$DisableUnusedBloat
+    [switch]$DisableUnusedBloat,
+    [switch]$UpdateSafePackages
 )
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
-if (-not ($SetBalancedPowerPlan -or $CleanOrphanStartup -or $DisableNIServices -or $RestoreNIServices -or $HideLinuxRecoveryDrive -or $DisableUnusedBloat)) {
+if (-not ($SetBalancedPowerPlan -or $CleanOrphanStartup -or $DisableNIServices -or $RestoreNIServices -or $HideLinuxRecoveryDrive -or $DisableUnusedBloat -or $UpdateSafePackages)) {
     Write-Host ""
     Write-Host "  OPTIMIZE-PC // Available Remediation Flags" -ForegroundColor Cyan
     Write-Host "  ------------------------------------------------------------------" -ForegroundColor DarkCyan
@@ -27,6 +28,7 @@ if (-not ($SetBalancedPowerPlan -or $CleanOrphanStartup -or $DisableNIServices -
     Write-Host "  .\optimize-pc.cmd -RestoreNIServices       # [Admin] Start NI background services for LabVIEW/Multisim sessions"
     Write-Host "  .\optimize-pc.cmd -HideLinuxRecoveryDrive  # [Admin] Safely unmount D: letter from Pop!_OS /recovery partition"
     Write-Host "  .\optimize-pc.cmd -DisableUnusedBloat      # [Admin] Disable Eraser & TickTick autostart + stop SamsungMagicianSVC"
+    Write-Host "  .\optimize-pc.cmd -UpdateSafePackages      # [Admin] Pin qBittorrent 5.1.0 & upgrade vetted security/utility apps"
     Write-Host ""
     return
 }
@@ -57,7 +59,7 @@ if ($CleanOrphanStartup) {
     }
 }
 
-$needsAdmin = ($DisableNIServices -or $RestoreNIServices -or $HideLinuxRecoveryDrive -or $DisableUnusedBloat)
+$needsAdmin = ($DisableNIServices -or $RestoreNIServices -or $HideLinuxRecoveryDrive -or $DisableUnusedBloat -or $UpdateSafePackages)
 if ($needsAdmin -and -not $isAdmin) {
     Write-Host "[*] Administrator privileges are required for the selected flags. Requesting UAC elevation..." -ForegroundColor Yellow
     $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"")
@@ -67,6 +69,7 @@ if ($needsAdmin -and -not $isAdmin) {
     if ($RestoreNIServices)      { $argList += "-RestoreNIServices" }
     if ($HideLinuxRecoveryDrive) { $argList += "-HideLinuxRecoveryDrive" }
     if ($DisableUnusedBloat)     { $argList += "-DisableUnusedBloat" }
+    if ($UpdateSafePackages)     { $argList += "-UpdateSafePackages" }
     try {
         Start-Process powershell.exe -Verb RunAs -ArgumentList ($argList -join " ") -Wait
         return
@@ -126,4 +129,24 @@ if ($DisableUnusedBloat) {
         Set-Service -Name "SamsungMagicianSVC" -StartupType Manual -ErrorAction SilentlyContinue
         Write-Host "    Stopped SamsungMagicianSVC and set StartupType to Manual." -ForegroundColor Green
     }
+}
+
+if ($UpdateSafePackages) {
+    Write-Host "[*] Ensuring qBittorrent 5.1.0 is pinned against 5.3.0 (declined on MAM)..." -ForegroundColor Cyan
+    winget pin add --id qBittorrent.qBittorrent --blocking --accept-source-agreements 2>$null
+    $safeIds = @(
+        "DominikReichl.KeePass",
+        "IDRIX.VeraCrypt",
+        "7zip.7zip",
+        "Tailscale.Tailscale",
+        "Proton.ProtonPass",
+        "Proton.ProtonMail",
+        "Git.Git",
+        "voidtools.Everything"
+    )
+    foreach ($pkg in $safeIds) {
+        Write-Host "[*] Upgrading $pkg..." -ForegroundColor Cyan
+        winget upgrade --id $pkg --silent --accept-package-agreements --accept-source-agreements
+    }
+    Write-Host "[+] Safe package upgrades completed!" -ForegroundColor Green
 }
