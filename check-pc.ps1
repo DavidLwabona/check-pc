@@ -18,16 +18,20 @@
 param(
     [string]$OutputHtml = "",
     [string]$OutputJson = "",
-    [switch]$OpenReport
+    [switch]$OpenReport,
+    [switch]$AsAdmin
 )
-
-if ([string]::IsNullOrWhiteSpace($OutputHtml)) {
-    $baseDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
-    $OutputHtml = Join-Path $baseDir "reports\pc-health-report.html"
-}
 
 $ErrorActionPreference = "SilentlyContinue"
 $startTime = Get-Date
+$baseDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+
+if ([string]::IsNullOrWhiteSpace($OutputHtml)) {
+    $OutputHtml = Join-Path $baseDir "reports\pc-health-report.html"
+}
+if ([string]::IsNullOrWhiteSpace($OutputJson)) {
+    $OutputJson = Join-Path $baseDir "reports\telemetry.local.json"
+}
 
 function Write-Section($Title) {
     Write-Host ""
@@ -37,6 +41,15 @@ function Write-Section($Title) {
 }
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+if ($AsAdmin -and -not $isAdmin) {
+    Write-Host "[*] Requesting UAC Administrator elevation for full CPU/Fan RPM, NVMe SMART, and BitLocker telemetry..." -ForegroundColor Yellow
+    $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"", "-OutputHtml", "`"$OutputHtml`"", "-OutputJson", "`"$OutputJson`"")
+    if ($OpenReport) { $argList += "-OpenReport" }
+    Start-Process powershell.exe -Verb RunAs -ArgumentList ($argList -join " ") -Wait
+    Write-Host "[+] Elevated check-pc scan complete! Telemetry saved to $OutputJson" -ForegroundColor Green
+    return
+}
 
 Write-Host ""
 Write-Host "  CHECK-PC // System, Thermal, Resource & Security Auditor" -ForegroundColor White
@@ -124,10 +137,13 @@ if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
     }
 }
 
-$lenovoCpuTemp = $null
-$lenovoGpuTemp = $null
-$lenovoFan1    = $null
-$lenovoFan2    = $null
+$lenovoCpuTemp  = $null
+$lenovoGpuTemp  = $null
+$lenovoFan1     = $null
+$lenovoFan2     = $null
+$lenovoFanMode  = $null
+$nvmeSmart      = @()
+$acpiTemps      = @()
 if ($isAdmin) {
     $gz = Get-CimInstance -Namespace root/wmi -ClassName LENOVO_GAMEZONE_DATA -ErrorAction SilentlyContinue
     if ($gz) {
@@ -135,8 +151,19 @@ if ($isAdmin) {
         $lenovoGpuTemp = (Invoke-CimMethod -InputObject $gz -MethodName GetGPUtemp -ErrorAction SilentlyContinue).Data
         $lenovoFan1    = (Invoke-CimMethod -InputObject $gz -MethodName GetFan1Speed -ErrorAction SilentlyContinue).Data
         $lenovoFan2    = (Invoke-CimMethod -InputObject $gz -MethodName GetFan2Speed -ErrorAction SilentlyContinue).Data
-        Write-Host ("  Legion WMI   : CPU Temp: {0}°C | GPU Temp: {1}°C | Fan 1: {2} RPM | Fan 2: {3} RPM" -f $lenovoCpuTemp, $lenovoGpuTemp, $lenovoFan1, $lenovoFan2) -ForegroundColor Green
+        $lenovoFanMode = (Invoke-CimMethod -InputObject $gz -MethodName GetSmartFanMode -ErrorAction SilentlyContinue).Data
+        Write-Host ("  Legion WMI   : CPU Temp: {0}°C | GPU Temp: {1}°C | Fan 1: {2} RPM | Fan 2: {3} RPM | Thermal Mode: {4}" -f $lenovoCpuTemp, $lenovoGpuTemp, $lenovoFan1, $lenovoFan2, $lenovoFanMode) -ForegroundColor Green
     }
+    $acpiTemps = @(Get-CimInstance -Namespace root/wmi -ClassName MSAcpi_ThermalZoneTemperature -ErrorAction SilentlyContinue | ForEach-Object {
+        [PSCustomObject]@{ Zone = $_.InstanceName; TempC = [math]::Round(($_.CurrentTemperature / 10) - 273.15, 1) }
+    })
+    $nvmeSmart = @(Get-PhysicalDisk | Where-Object BusType -eq 'NVMe' | ForEach-Object {
+        $rel = $_ | Get-StorageReliabilityCounter -ErrorAction SilentlyContinue
+        if ($rel) {
+            Write-Host ("  NVMe SMART   : {0} -> Temp: {1}°C | Wear: {2}% | PowerOnHours: {3}h" -f $_.FriendlyName, $rel.Temperature, $rel.Wear, $rel.PowerOnHours) -ForegroundColor Cyan
+            [PSCustomObject]@{ Disk = $_.FriendlyName; TempC = $rel.Temperature; TempMaxC = $rel.TemperatureMax; WearPct = $rel.Wear; PowerOnHours = $rel.PowerOnHours }
+        }
+    })
 }
 
 $pwrLine = (powercfg /getactivescheme) -join " "
@@ -195,11 +222,20 @@ $fwAllEnabled = ($fw | Where-Object { -not $_.Enabled }).Count -eq 0
 $exposedPorts = @(Get-NetTCPConnection -State Listen | Where-Object { $_.LocalAddress -notmatch '^(127\.|::1$)' } | Select-Object LocalAddress, LocalPort, OwningProcess, @{N='ProcessName';E={(Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).Name}} | Sort-Object LocalPort -Unique)
 $niServices   = @(Get-Service | Where-Object { $_.DisplayName -match '^NI ' -or $_.Name -match '^(NI|lkads|lktsrv|mxssvr)' } | Where-Object Status -eq 'Running')
 
+$bitlockerStatus = "Requires Admin"
+if ($isAdmin) {
+    $blVol = Get-BitLockerVolume -MountPoint "C:" -ErrorAction SilentlyContinue
+    if ($blVol) {
+        $bitlockerStatus = "$($blVol.VolumeStatus) (Protection: $($blVol.ProtectionStatus), $($blVol.EncryptionPercentage)%)"
+    }
+}
+
 Write-Host ("  Secure Boot          : {0}" -f $(if ($sb) { 'Enabled' } else { 'Disabled' }))
 Write-Host ("  Memory Integrity     : {0}" -f $(if ($hvci) { 'Enabled (HVCI Active)' } else { 'Disabled' }))
 Write-Host ("  UAC Secure Desktop   : {0}" -f $(if ($uac.EnableLUA -eq 1) { 'Enabled' } else { 'Disabled' }))
 Write-Host ("  Windows Firewall     : {0}" -f $(if ($fwAllEnabled) { 'All Profiles Enabled' } else { 'WARNING: Profile Disabled' }))
 Write-Host ("  Remote Desktop (RDP) : {0}" -f $(if ($rdp) { 'Disabled (Safe)' } else { 'Enabled' }))
+Write-Host ("  BitLocker (C:)       : {0}" -f $bitlockerStatus)
 Write-Host ("  Non-Localhost Ports  : {0} listening TCP ports ({1} active National Instruments services)" -f $exposedPorts.Count, $niServices.Count)
 
 # ------------------------------------------------------------------------------
@@ -210,11 +246,11 @@ $recommendations = @()
 $oldGpu = $gpuList | Where-Object { $_.AgeDays -gt 365 }
 foreach ($og in $oldGpu) {
     $recommendations += [PSCustomObject]@{
-        Severity = "High"
+        Severity = "Low"
         Category = "Drivers & Graphics"
-        Title    = "Outdated GPU Driver: $($og.Name) ($($og.AgeDays) days old)"
-        Detail   = "Driver $($og.Driver) is from $($og.DriverDate). Updating the integrated GPU driver improves Windows 11 1440p desktop compositing, WebView2 stability, and hybrid GPU handoff."
-        Action   = "Update via Lenovo Vantage or Intel Driver & Support Assistant."
+        Title    = "OEM-Locked iGPU Driver: $($og.Name) ($($og.Driver), $($og.DriverDate))"
+        Detail   = "Lenovo froze the OEM-validated Legion 5 Pro (82RB) Intel Iris Xe driver at 31.0.101.4502 (preserving Lenovo Hybrid/Optimus panel customisations). Intel offers newer generic 11th-14th Gen WHQL drivers (32.0.101.xxxx) if needed."
+        Action   = "Optional: winget install Intel.IntelDriverAndSupportAssistant (or keep Lenovo OEM 31.0.101.4502 for Hybrid Mode stability)."
     }
 }
 
@@ -297,15 +333,19 @@ $telemetry = [PSCustomObject]@{
     }
     GPUs            = $gpuList
     Thermals        = @{
-        NvidiaTempC  = $gpuTempC
-        NvidiaPowerW = $gpuPowerW
-        NvidiaUtil   = $gpuUtilPct
-        LegionCpuC   = $lenovoCpuTemp
-        LegionFan1   = $lenovoFan1
-        LegionFan2   = $lenovoFan2
-        PowerPlan    = $powerScheme
-        BatteryPct   = $bat.EstimatedChargeRemaining
-        BatteryWh    = if ($batFullCap) { [math]::Round($batFullCap / 1000, 2) } else { $null }
+        NvidiaTempC   = $gpuTempC
+        NvidiaPowerW  = $gpuPowerW
+        NvidiaUtil    = $gpuUtilPct
+        LegionCpuC    = $lenovoCpuTemp
+        LegionGpuC    = $lenovoGpuTemp
+        LegionFan1    = $lenovoFan1
+        LegionFan2    = $lenovoFan2
+        LegionFanMode = $lenovoFanMode
+        AcpiZones     = $acpiTemps
+        NvmeSmart     = $nvmeSmart
+        PowerPlan     = $powerScheme
+        BatteryPct    = $bat.EstimatedChargeRemaining
+        BatteryWh     = if ($batFullCap) { [math]::Round($batFullCap / 1000, 2) } else { $null }
     }
     Disks           = $disks
     Volumes         = $vols
@@ -317,6 +357,7 @@ $telemetry = [PSCustomObject]@{
         UAC          = ($uac.EnableLUA -eq 1)
         FirewallOk   = $fwAllEnabled
         RDPDisabled  = $rdp
+        BitLockerC   = $bitlockerStatus
         ExposedPorts = $exposedPorts
     }
     Recommendations = $recommendations
