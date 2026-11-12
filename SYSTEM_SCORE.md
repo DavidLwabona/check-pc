@@ -23,9 +23,9 @@
 * **Physical Drive Isolation During OS Install:** Physically removing the Windows NVMe drive before installing Pop!_OS on the Samsung SSD prevented Linux/Windows EFI bootloader entanglement—each SSD has its own independent EFI partition.
 
 ### 2. Battery & Thermal Longevity — **9.5 / 10** *(was 8.5 / 10)*
-* **Battery Conservation Mode (80% Cap):** Keeping Lenovo's 80% charge limit active has preserved the battery at **75.02 Wh out of ~80 Wh design capacity (~93.8% health)** after years of use—far above average for a high-wattage gaming/workstation laptop.
+* **Battery Conservation Mode (80% Cap):** Keeping Lenovo's 80% charge limit active has kept the battery at just **159 charge cycles** and preserved **75.02 Wh out of ~80 Wh design capacity (~93.8% health)** after years of use—far above average for a high-wattage gaming/workstation laptop.
 * **NVMe & GPU Thermals:** Both 2 TB NVMe SSDs show **0% wear** and run cool (**42 °C** on the SN850X, **48 °C** on the 970 EVO Plus).
-* **Today's Improvement (+1.0):** Switched Windows from locked *High Performance* to *Balanced* (paired with Legion Thermal Mode `2`), allowing Intel Thread Director to park idle P/E cores and dropping idle GPU temperature from **59.5 °C $\rightarrow$ 56.1 °C** and idle CPU load to **4%**.
+* **Today's Improvement (+1.0):** Switched Windows from locked *High Performance* to *Balanced* (paired with Legion Thermal Mode `2`), installed **Lenovo Legion Toolkit (`2.26.1`)** (replacing Lenovo Vantage / Hotkeys background services), and verified live Embedded Controller sensors (**71 °C CPU / 59 °C GPU / 3,800 RPM dual fans** while driving the external monitor).
 
 ### 3. Privacy & Torrent OPSEC — **10 / 10**
 * **Dual-Layer VPN Protection:**
