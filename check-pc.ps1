@@ -238,10 +238,54 @@ Write-Host ("  Remote Desktop (RDP) : {0}" -f $(if ($rdp) { 'Disabled (Safe)' } 
 Write-Host ("  BitLocker (C:)       : {0}" -f $bitlockerStatus)
 Write-Host ("  Non-Localhost Ports  : {0} listening TCP ports ({1} active National Instruments services)" -f $exposedPorts.Count, $niServices.Count)
 
+# OPSEC & Software Whitelist Checks (ProtonVPN, Bitdefender, qBittorrent)
+$bdRunning    = $null -ne (Get-Service -Name "VSSERV" -ErrorAction SilentlyContinue | Where-Object Status -eq 'Running')
+$pvpnRunning  = $null -ne (Get-Service -Name "ProtonVPN Service" -ErrorAction SilentlyContinue | Where-Object Status -eq 'Running')
+$qbIniPath    = "$env:APPDATA\qBittorrent\qBittorrent.ini"
+$qbIfaceName  = "Not Configured"
+$qbDhtOff     = $false
+$qbPexOff     = $false
+$qbLsdOff     = $false
+$qbUpnpOff    = $false
+if (Test-Path $qbIniPath) {
+    $qbContent = Get-Content $qbIniPath -Raw
+    if ($qbContent -match 'Session\\InterfaceName=([^\r\n]+)') { $qbIfaceName = $Matches[1].Trim() }
+    $qbDhtOff  = $qbContent -match 'Session\\DHTEnabled=false'
+    $qbPexOff  = $qbContent -match 'Session\\PeXEnabled=false'
+    $qbLsdOff  = $qbContent -match 'Session\\LSDEnabled=false'
+    $qbUpnpOff = $qbContent -match 'PortForwardingEnabled=false'
+}
+$qbExe = "C:\Program Files\qBittorrent\qbittorrent.exe"
+$qbVer = if (Test-Path $qbExe) { (Get-Item $qbExe).VersionInfo.ProductVersion } else { "Not Installed" }
+
+Write-Host ("  Antivirus Shield     : {0}" -f $(if ($bdRunning) { 'Bitdefender Total Security Active [PROTECTED]' } else { 'Windows Defender / Other' })) -ForegroundColor Green
+Write-Host ("  VPN & Kill Switch    : {0}" -f $(if ($pvpnRunning) { 'ProtonVPN Active [PROTECTED OPSEC]' } else { 'WARNING: ProtonVPN Service Not Running' })) -ForegroundColor $(if ($pvpnRunning) { 'Green' } else { 'Yellow' })
+Write-Host ("  qBittorrent OPSEC    : v{0} | Bound Interface: '{1}' | DHT/PeX/LSD/UPnP Disabled: {2}" -f $qbVer, $qbIfaceName, ($qbDhtOff -and $qbPexOff -and $qbLsdOff -and $qbUpnpOff)) -ForegroundColor $(if ($qbIfaceName -eq 'ProtonVPN' -and $qbVer -notmatch '^5\.3\.0') { 'Green' } else { 'Red' })
+
 # ------------------------------------------------------------------------------
 # 6. BUILD RECOMMENDATIONS
 # ------------------------------------------------------------------------------
 $recommendations = @()
+
+if ((Test-Path $qbIniPath) -and ($qbIfaceName -ne 'ProtonVPN')) {
+    $recommendations += [PSCustomObject]@{
+        Severity = "High"
+        Category = "OPSEC & Privacy"
+        Title    = "qBittorrent Network Interface Not Bound to ProtonVPN (Current: $qbIfaceName)"
+        Detail   = "To prevent ISP IP leaks if VPN drops, qBittorrent must remain strictly bound to the 'ProtonVPN' interface in Tools -> Options -> Advanced."
+        Action   = "Set Session\InterfaceName=ProtonVPN in %APPDATA%\qBittorrent\qBittorrent.ini"
+    }
+}
+
+if ($qbVer -match '^5\.3\.0') {
+    $recommendations += [PSCustomObject]@{
+        Severity = "High"
+        Category = "Tracker Whitelist & Stability"
+        Title    = "qBittorrent 5.3.0 Detected (DECLINED on MyAnonamouse / +10 GB RAM Leak Bug)"
+        Detail   = "qBittorrent 5.3.0 has critical crash regressions (#25125, #25118) and a severe 10+ GB RAM leak / OOM bug on libtorrent 2.0.15/2.1.2, and is officially declined on MAM."
+        Action   = "Downgrade to qBittorrent 5.1.0 or 5.2.4 and keep winget pin active (winget pin add --id qBittorrent.qBittorrent --blocking)."
+    }
+}
 
 $oldGpu = $gpuList | Where-Object { $_.AgeDays -gt 365 }
 foreach ($og in $oldGpu) {
