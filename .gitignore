@@ -1,0 +1,10 @@
+# Generated local reports (contain machine-specific IPs/serials)
+reports/
+*.local.html
+*.local.json
+
+# OS & Editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
